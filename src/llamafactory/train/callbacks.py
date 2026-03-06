@@ -173,18 +173,25 @@ class GracefulStopCallback(TrainerCallback):
     r"""A callback for saving a checkpoint and stopping training on SIGINT/SIGTERM.
 
     On the first signal, sets flags so the trainer finishes the current step,
-    saves a checkpoint, and exits cleanly. A second signal restores the default
-    handler, so pressing Ctrl+C twice still force-kills the process.
+    saves a full checkpoint (model, optimizer, scheduler, RNG state), and exits
+    cleanly. A second signal restores the default handler, so pressing Ctrl+C
+    twice still force-kills the process.
+
+    The interrupt checkpoint is saved as ``interrupt-checkpoint-{step}`` so it
+    does not count towards ``save_total_limit``.
     """
 
     def __init__(self) -> None:
         self._original_sigint = None
         self._original_sigterm = None
         self._control = None
+        self._interrupted = False
+        self._original_save_total_limit = None
 
     def _handler(self, signum, frame) -> None:
         sig_name = signal.Signals(signum).name
         logger.info_rank0(f"Received {sig_name} — finishing current step, saving checkpoint, then stopping.")
+        self._interrupted = True
         if self._control is not None:
             self._control.should_training_stop = True
             self._control.should_save = True
@@ -203,6 +210,30 @@ class GracefulStopCallback(TrainerCallback):
     @override
     def on_step_end(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
         self._control = control
+        if self._interrupted:
+            # Temporarily bump save_total_limit so the interrupt checkpoint
+            # does not cause an older regular checkpoint to be evicted.
+            self._original_save_total_limit = args.save_total_limit
+            if args.save_total_limit is not None:
+                args.save_total_limit += 1
+
+    @override
+    def on_substep_end(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        self._control = control
+
+    @override
+    def on_save(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        if self._interrupted:
+            # Restore original save_total_limit
+            if self._original_save_total_limit is not None:
+                args.save_total_limit = self._original_save_total_limit
+                self._original_save_total_limit = None
+            # Rename checkpoint so it is excluded from future rotation
+            src = os.path.join(args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}")
+            dst = os.path.join(args.output_dir, f"interrupt-{PREFIX_CHECKPOINT_DIR}-{state.global_step}")
+            if os.path.isdir(src):
+                os.rename(src, dst)
+                logger.info_rank0(f"Interrupt checkpoint saved at: {dst}")
 
     @override
     def on_train_end(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):

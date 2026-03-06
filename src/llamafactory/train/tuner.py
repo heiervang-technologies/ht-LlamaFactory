@@ -59,7 +59,9 @@ def _training_function(config: dict[str, Any]) -> None:
     callbacks: list[Any] = config.get("callbacks")
     model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(args)
 
-    callbacks.append(GracefulStopCallback())
+    if finetuning_args.save_on_interrupt:
+        callbacks.append(GracefulStopCallback())
+
     callbacks.append(LogCallback())
     if finetuning_args.pissa_convert:
         callbacks.append(PissaConvertCallback())
