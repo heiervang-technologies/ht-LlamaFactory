@@ -2321,3 +2321,5 @@ register_template(
     efficient_eos=True,
     template_class=Glm47ReasoningTemplate,
 )
+_class=Glm47ReasoningTemplate,
+)

@@ -136,7 +136,10 @@ def autocast_projector_dtype(model: "PreTrainedModel", model_args: "ModelArgumen
     if getattr(model, "quantization_method", None):
         model_type = getattr(model.config, "model_type", None)
         if model_type in COMPOSITE_MODELS:
-            mm_projector = COMPOSITE_MODELS[model_type].get_projector(model)
+            try:
+                mm_projector = COMPOSITE_MODELS[model_type].get_projector(model)
+            except AttributeError:
+                return
         else:
             return
 
